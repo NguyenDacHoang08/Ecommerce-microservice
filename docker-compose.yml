@@ -1,0 +1,382 @@
+
+services:
+  # ==========================================
+  # API GATEWAY (FastAPI custom gateway)
+  # ==========================================
+  api-gateway:
+    build:
+      context: ./gateway
+    container_name: api_gateway
+    ports:
+      - "80:8080"
+    environment:
+      - USER_SERVICE_URL=http://user-service:8000
+      - PRODUCT_SERVICE_URL=http://product-service:8001
+      - CART_SERVICE_URL=http://cart-service:8002
+      - ORDER_SERVICE_URL=http://order-service:8003
+      - PAYMENT_SERVICE_URL=http://payment-service:8004
+      - SHIPPING_SERVICE_URL=http://shipping-service:8005
+      - AI_SERVICE_URL=http://ai-service:8006
+      - FRONTEND_URL=http://frontend:3000
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost,http://127.0.0.1:3000,http://127.0.0.1
+      - GATEWAY_PORT=8080
+      - REQUEST_TIMEOUT=30
+    networks:
+      - ecommerce_network
+    depends_on:
+      - user-service
+      - product-service
+      - cart-service
+      - order-service
+      - payment-service
+      - shipping-service
+      - frontend
+      - ai-service
+    volumes:
+      - ./gateway:/app
+    restart: always
+
+  # ==========================================
+  # DATABASES
+  # ==========================================
+  mysql-db:
+    image: mysql:8.0
+    container_name: user_mysql_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: user_db
+      MYSQL_USER: ${DB_USER:-dbuser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-dbpassword}
+    volumes:
+      - mysqldata:/var/lib/mysql
+    networks:
+      - ecommerce_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: ecommerce_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-dbuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dbpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - ecommerce_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dbuser} -d ${POSTGRES_DB:-ecommerce_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    networks:
+      - ecommerce_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # MICROSERVICES
+  # ==========================================
+  user-service:
+    build: 
+      context: ./user-service
+    container_name: user_service
+    env_file: .env
+    environment:
+      - DB_HOST=mysql-db
+      - DB_PORT=3306
+      - DB_NAME=user_db
+      - DB_USER=${DB_USER:-dbuser}
+      - DB_PASSWORD=${DB_PASSWORD:-dbpassword}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - JWT_SIGNING_KEY=${SECRET_KEY:-django-insecure-secret-key-for-dev-12345-changeme}
+    volumes:
+      - ./user-service:/app
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8000 --workers 3 user_service.wsgi:application"
+    expose:
+      - "8000"
+    networks:
+      - ecommerce_network
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  product-service:
+    build: 
+      context: ./product-service
+    container_name: product_service
+    env_file: .env
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-ecommerce_db}
+      - DB_USER=${DB_USER:-dbuser}
+      - DB_PASSWORD=${DB_PASSWORD:-dbpassword}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-secret-key-for-dev-12345-changeme}
+    volumes:
+      - ./product-service:/app
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             python manage.py seed_categories &&
+             gunicorn --bind 0.0.0.0:8001 --workers 3 core.wsgi:application"
+    expose:
+      - "8001"
+    networks:
+      - ecommerce_network
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  cart-service:
+    build: 
+      context: ./cart-service
+    container_name: cart_service
+    env_file: .env
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-ecommerce_db}
+      - DB_USER=${DB_USER:-dbuser}
+      - DB_PASSWORD=${DB_PASSWORD:-dbpassword}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-secret-key-for-dev-12345-changeme}
+    volumes:
+      - ./cart-service:/app
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8002 --workers 3 core.wsgi:application"
+    expose:
+      - "8002"
+    networks:
+      - ecommerce_network
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  order-service:
+    build: 
+      context: ./order-service
+    container_name: order_service
+    env_file: .env
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-ecommerce_db}
+      - DB_USER=${DB_USER:-dbuser}
+      - DB_PASSWORD=${DB_PASSWORD:-dbpassword}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-secret-key-for-dev-12345-changeme}
+    volumes:
+      - ./order-service:/app
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8003 --workers 3 core.wsgi:application"
+    expose:
+      - "8003"
+    networks:
+      - ecommerce_network
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  payment-service:
+    build: 
+      context: ./payment-service
+    container_name: payment_service
+    env_file: .env
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-ecommerce_db}
+      - DB_USER=${DB_USER:-dbuser}
+      - DB_PASSWORD=${DB_PASSWORD:-dbpassword}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-secret-key-for-dev-12345-changeme}
+    volumes:
+      - ./payment-service:/app
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8004 --workers 3 core.wsgi:application"
+    expose:
+      - "8004"
+    networks:
+      - ecommerce_network
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  # ==========================================
+  # AI SERVICE
+  # ==========================================
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: ai_service
+    ports:
+      - "8006:8006"
+    environment:
+      # PostgreSQL (AI dedicated)
+      - POSTGRES_HOST=postgres-ai
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${AI_DB_USER:-ai_user}
+      - POSTGRES_PASSWORD=${AI_DB_PASSWORD:-ai_password}
+      - POSTGRES_DB=${AI_DB_NAME:-ai_db}
+      # Neo4j
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-neo4j_password}
+      # Product service (for RAG product sync)
+      - PRODUCT_SERVICE_URL=http://product-service:8001
+      # OpenAI (optional)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Model paths (inside container)
+      - LSTM_MODEL_PATH=/app/models/lstm_model.pth
+      - LSTM_VOCAB_PATH=/app/models/product_vocab.json
+      - FAISS_INDEX_PATH=/app/vectorstore/product.index
+      - PRODUCTS_JSON_PATH=/app/vectorstore/products.json
+    volumes:
+      - ./ai-service/app:/app/app
+      - ./ai-service/data:/app/data
+      - ai_models:/app/models
+      - ai_vectorstore:/app/vectorstore
+    networks:
+      - ecommerce_network
+    depends_on:
+      postgres-ai:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      product-service:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
+
+  # ── AI Databases ────────────────────────────────────────────
+  postgres-ai:
+    image: postgres:15-alpine
+    container_name: ai_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AI_DB_USER:-ai_user}
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD:-ai_password}
+      POSTGRES_DB: ${AI_DB_NAME:-ai_db}
+    ports:
+      - "5433:5432"
+    volumes:
+      - ai_pgdata:/var/lib/postgresql/data
+    networks:
+      - ecommerce_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AI_DB_USER:-ai_user} -d ${AI_DB_NAME:-ai_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.19-community
+    container_name: ai_neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j_password}
+      NEO4J_dbms_memory_heap_initial__size: "512m"
+      NEO4J_dbms_memory_heap_max__size: "1G"
+      NEO4J_dbms_memory_pagecache_size: "512m"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    networks:
+      - ecommerce_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+
+  shipping-service:
+    build: 
+      context: ./shipping-service
+    container_name: shipping_service
+    env_file: .env
+    environment:
+      - DB_HOST=postgres-db
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB:-ecommerce_db}
+      - DB_USER=${DB_USER:-dbuser}
+      - DB_PASSWORD=${DB_PASSWORD:-dbpassword}
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-secret-key-for-dev-12345-changeme}
+    volumes:
+      - ./shipping-service:/app
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             gunicorn --bind 0.0.0.0:8005 --workers 3 core.wsgi:application"
+    expose:
+      - "8005"
+    networks:
+      - ecommerce_network
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./ecom-frontend
+    container_name: ecom_frontend
+    volumes:
+      - ./ecom-frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - ecommerce_network
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+
+networks:
+  ecommerce_network:
+    driver: bridge
+
+volumes:
+  mysqldata:
+  pgdata:
+  redisdata:
+  ai_pgdata:
+  ai_models:
+  ai_vectorstore:
+  neo4j_data:
+  neo4j_logs:

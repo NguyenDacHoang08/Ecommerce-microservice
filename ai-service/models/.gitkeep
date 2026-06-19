@@ -1,0 +1,3 @@
+# Model weights stored here (mounted as Docker volume)
+# lstm_model.pth  — trained LSTM weights
+# product_vocab.json — product_id to index mapping

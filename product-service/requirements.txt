@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements.txt – Shared base for all Django microservices
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core Framework ────────────────────────────────────────────────────────────
+Django==5.0.6
+djangorestframework==3.15.2
+
+# ── Authentication ────────────────────────────────────────────────────────────
+djangorestframework-simplejwt==5.3.1
+
+# ── Database Drivers ─────────────────────────────────────────────────────────
+psycopg2-binary==2.9.9          # PostgreSQL
+mysqlclient==2.2.4              # MySQL (user-service)
+
+# ── CORS & Environment ────────────────────────────────────────────────────────
+django-cors-headers==4.4.0
+django-environ==0.11.2
+
+# ── Filtering & Search ────────────────────────────────────────────────────────
+django-filter==24.2
+
+# ── API Documentation ─────────────────────────────────────────────────────────
+drf-spectacular==0.27.2
+
+# ── Production Server ─────────────────────────────────────────────────────────
+gunicorn==22.0.0
+uvicorn[standard]==0.30.1       # async alternative (optional)
+
+# ── Async / Task Queue ────────────────────────────────────────────────────────
+celery==5.4.0
+redis==5.0.7
+
+# ── Date/Time Utilities ───────────────────────────────────────────────────────
+python-dateutil==2.9.0.post0
+
+# ── Health & Utilities ────────────────────────────────────────────────────────
+Pillow==10.3.0                  # image handling
